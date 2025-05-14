@@ -1,0 +1,916 @@
+% Read Siemens PC data
+ 
+clc
+list=dir;
+list=list(~ismember({list.name},{'.','..','.DS_Store','._.DS_Store'}));
+list = list([list(:).isdir]);
+names={list.name};
+
+idxMag=find(contains(names,'_26'));%highest
+idxVx=find(contains(names,'_24'));%second lowest
+idxVy=find(contains(names,'_25'));%second highest
+idxVz=find(contains(names,'_23'));%lowest   
+
+[Vx,Svx] = dicom2struct_siemens(names{1,idxVx},'test');
+cd ..
+[Vy,Svy] = dicom2struct_siemens(names{1,idxVy},'test');
+cd ..
+[Vz,Svz] = dicom2struct_siemens(names{1,idxVz},'test');
+cd ..
+[M,Sm] = dicom2struct_siemens(names{1,idxMag},'test');
+
+triggerX=unique([Svx.trigger]);
+triggerY=unique([Svy.trigger]);
+triggerZ=unique([Svz.trigger]);
+pxSp=unique([Svx.pxSpacing,Svy.pxSpacing,Svz.pxSpacing]);
+
+venc=15;
+SS=-4096/2/venc*(-1);
+Vx=double(Vx)/SS-4096/2/SS;
+Vy=double(Vy)/SS-4096/2/SS;
+Vz=double(Vz)/SS-4096/2/SS;
+
+Mg=mat2gray(double(M));
+mask=Mg;
+mask(mask<0.1)=0;
+mask(mask>=0.1)=1;
+
+VxM=Vx.*mask;
+VyM=Vy.*mask;
+VzM=Vz.*mask;
+
+%phase shading
+VxCorrection=mean(VxM,4);
+VyCorrection=mean(VyM,4);
+VzCorrection=mean(VzM,4);
+
+VxMc=VxM-VxCorrection;
+VyMc=VyM-VyCorrection;
+VzMc=VzM-VzCorrection;
+
+mask(mask==0)=NaN;
+VxMc=VxMc.*mask;
+VyMc=VyMc.*mask;
+VzMc=VzMc.*mask;
+
+% %%
+% HISTOGRAM---------------------------------------------------------------------------------------------------
+% 
+% VxMh=VxM;
+% VxMh(VxM==0)=NaN;
+% VyMh=VzM;
+% VyMh(VyM==0)=NaN;
+% VzMh=VzM;
+% VzMh(VzM==0)=NaN;
+% 
+% % figure
+% % histogram(VxMh,200,'EdgeColor','none'); hold on
+% % histogram(VyMh,200,'EdgeColor','none')
+% % histogram(VzMh,200,'EdgeColor','none')
+% 
+% VxMch=VxMc;
+% VxMch(VxMc==0)=NaN;
+% VyMch=VyMc;
+% VyMch(VyMc==0)=NaN;
+% VzMch=VzMc;
+% VzMch(VzMc==0)=NaN;
+% 
+% % figure
+% % histogram(VxMch,200,'EdgeColor','none'); hold on
+% % histogram(VyMch,200,'EdgeColor','none')
+% % histogram(VzMch,200,'EdgeColor','none')
+% % %set(gca,'yscale','log')
+% % legend({'$v_x$','$v_y$','$v_z$'},'Interpreter','latex','FontSize',18,'location','best');
+% 
+% ax = gca;
+% ax.TickLabelInterpreter = 'latex';
+% ax.FontSize = 18;
+% xlabel('$\mathrm{velocity} \quad \left[ \mathrm{cm/s} \right] $', 'Interpreter','latex','FontSize',18);
+
+%%
+save('siemensProcessed.mat','VxMc','VyMc','VzMc','triggerX','triggerY','triggerZ','mask','Mg','pxSp')
+
+
+
+
+% Recon.seriesNum
+% Recon.ID
+% Recon.location
+% Recon.MVC
+% Recon.data
+% Recon.M
+% Recon.Vx
+% Recon.Vy
+% Recon.Vz
+
+
+
+num_iter=10; kappa=1; option=1; delta_t=3/44;
+pixelspacing = [pxSp,pxSp,5.0000]'; 
+
+series=1;
+volume = 1;
+
+VxMc(isnan(VxMc))=0;
+VyMc(isnan(VyMc))=0;
+VzMc(isnan(VzMc))=0;
+
+Data(volume).vx = VxMc;
+Data(volume).vy = VyMc;
+Data(volume).vz = VzMc;
+Data(volume).mask = mask;
+
+Data(volume).m  = Mg;
+frames=size(Data(volume).vx,4);
+    
+    
+    h=waitbar(0,'Filtering');
+    
+    for k=1:frames
+
+         Data(volume).vx_sm(:,:,:,k) = anisodiff3D(Data(volume).vx(:,:,:,k),...
+                              num_iter,delta_t,kappa,option,pixelspacing);
+         Data(volume).vy_sm(:,:,:,k) = anisodiff3D(Data(volume).vy(:,:,:,k),...
+                              num_iter,delta_t,kappa,option,pixelspacing);
+         Data(volume).vz_sm(:,:,:,k) = anisodiff3D(Data(volume).vz(:,:,:,k),...
+                              num_iter,delta_t,kappa,option,pixelspacing);
+
+         waitbar(k/frames,h)
+         
+    end
+    
+    close(h)
+    
+    
+    
+% Saskya commented
+% 
+% slice=13;
+% 
+% a=figure;
+% imshow(mat2gray(Data(end).m(:,:,slice,1)),'Initialmagnification',400)
+% h_all = drawfreehand(gca);
+% mask_all = roiWait(h_all);
+% close(a)
+% 
+% a=figure;
+% imshow(mat2gray(Data(end).m(:,:,slice,1)),'Initialmagnification',400);
+% h_gm  = drawrectangle(gca,'Position',[50 50 5 15]);
+% mask_gm = roiWait(h_gm);
+% saveas(a,'roi_1_slice-8-ST.jpg')
+% close(a)
+% 
+% a=figure;
+% imshow(mat2gray(Data(end).m(:,:,slice,1)),'Initialmagnification',400);
+% h_sol  = drawrectangle(gca,'Position',[50 50 5 15]);
+% mask_sol = roiWait(h_sol);
+% close(a)
+
+
+
+%
+trigger=triggerX-cat(2,0,triggerX(1:end-1));
+trigger(1)=[];
+trigger=trigger/1000;
+
+mask=Data(series).mask(:,:,:,:);
+mask(mask==0)=NaN;
+[x,y,z]=meshgrid(1:size(Mg,2),1:size(Mg,1),1:size(Mg,3));
+
+%                                                                                                                                                                                                                                 
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
+x(isnan(mask(:,:,:,1)))=NaN;
+y(isnan(mask(:,:,:,1)))=NaN;
+z(isnan(mask(:,:,:,1)))=NaN;
+
+
+XS=zeros([size(x),frames]);
+YS=XS;
+ZS=XS;
+VX=XS;
+VY=XS;
+VZ=XS;
+VR=XS;
+
+    for yi=1:size(Mg,1)
+            yi
+          for xi=1:size(Mg,2)
+              
+              for zi = 1:size(Mg,3)  %change to the number of slices of the segmentation
+              
+                [xs,ys,zs,vx,vy,vz,vr]=track3dv2(x(yi,xi,zi),y(yi,xi,zi),z(yi,xi,zi),-Data(series).vx_sm,-Data(series).vy_sm,Data(series).vz_sm,trigger,pixelspacing);
+          
+                XS(yi,xi,zi,:)=xs;
+                YS(yi,xi,zi,:)=ys;
+                ZS(yi,xi,zi,:)=zs;
+                VX(yi,xi,zi,:)=vx;
+                VY(yi,xi,zi,:)=vy;
+                VZ(yi,xi,zi,:)=vz;
+                VR(yi,xi,zi,:)=vr;
+                
+              end
+          
+          end
+    end
+
+
+save('siemens_tracked.mat', '-v7.3');
+  
+    
+
+% 
+% mask_sol_dynamic=zeros(size(XS));
+% mask_sol_dynamic(:,:,12:14,:)=repmat(mask_sol,[1,1,3,frames]); %12:14...3
+% 
+% mask_gm_dynamic=zeros(size(XS));
+% mask_gm_dynamic(:,:,12:14,:)=repmat(mask_gm,[1,1,3,frames]);
+                    
+% tensor calcs                                
+Data(series).strain     =   strain_tensor_calcs_v2_original(VX,Data(series).vx_sm, VY, Data(series).vy_sm, VZ, Data(series).vz_sm,XS,YS,ZS,pixelspacing,trigger);
+
+% masking
+% Data(series).strain_SOL = strain_ROI_v3Siemens(Data(series).strain,double(mask_sol_dynamic));
+% Data(series).strain_GM  = strain_ROI_v3Siemens(Data(series).strain,double(mask_gm_dynamic));
+% 
+% % peak
+% Data(series).strain_SOL_peak = peak_ROI_SiemensV2(Data(series).strain_SOL);
+% Data(series).strain_GM_peak  = peak_ROI_SiemensV2(Data(series).strain_GM);
+
+
+
+% Commented by Saskya
+
+
+% %colormaps
+% foldername='cmap';
+% mkdir(foldername)
+% cd(foldername)
+% 
+% for slice=15 %slices to run the cmaps
+% 
+% %m=repmat(Data(series).m(:,:,slice,1),[1,1,1,size(Data(series).m,4)]);
+% m=repmat(Data(series).m(:,:,slice,:),[1,1,1,1]);
+% 
+% 
+% % displacements
+% 
+% limits=[0,7];
+% suffix=[foldername,num2str(slice),'_dx'];
+% units = '$|\Delta_{x}| \quad  [\mathrm{mm}]$';
+% d=10*squeeze(Data(series).strain.dx(:,:,slice,:));
+% colormap_strain(m,abs(d).*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,abs(d).*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_dy'];
+% units = '$|\Delta_{y}| \quad  [\mathrm{mm}]$';
+% d=10*squeeze(Data(series).strain.dy(:,:,slice,:));
+% colormap_strain(m,abs(d).*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,abs(d).*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_dz'];
+% units = '$|\Delta_{z}| \quad  [\mathrm{mm}]$';
+% d=10*squeeze(Data(series).strain.dz(:,:,slice,:));
+% colormap_strain(m,abs(d).*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,abs(d).*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% 
+% % velocities
+% limits=[-3,3];
+% suffix=[foldername,num2str(slice),'_vx'];
+% units = '$v_{x} \quad  [\mathrm{cm/s}]$';
+% d=squeeze(Data(series).strain.vx(:,:,slice,:));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_vy'];
+% units = '$v_{y} \quad  [\mathrm{cm/s}]$';
+% d=squeeze(Data(series).strain.vy(:,:,slice,:));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_vz'];
+% units = '$v_{z} \quad  [\mathrm{cm/s}]$';
+% d=squeeze(Data(series).strain.vz(:,:,slice,:));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% 
+% % Strain Euler
+% limits=[-0.7,0.7];
+% suffix=[foldername,num2str(slice),'_Eneg'];
+% units = '$E_{\lambda_{1}} \quad  [\mathrm{mm/mm}]$';
+% d=squeeze(Data(series).strain.E_lambda(:,:,slice,:,1));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_Esum'];
+% units = '$E_{\lambda_{2}} \quad  [\mathrm{mm/mm}]$';
+% d=squeeze(Data(series).strain.E_lambda(:,:,slice,:,2));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_Epos'];
+% units = '$E_{\lambda_{3}} \quad  [\mathrm{mm/mm}]$';
+% d=squeeze(Data(series).strain.E_lambda(:,:,slice,:,3));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_Eshear'];
+% units = '$E_{max} \quad  [\mathrm{mm/mm}]$';
+% d=squeeze(Data(series).strain.ShearE_max(:,:,slice,:));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_Evol'];
+% units = '$E_{vol}=\frac{\delta V}{V} \quad  [\mathrm{mm^3/mm^3}]$';
+% d=squeeze(Data(series).strain.E_Volumetric(:,:,slice,:));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% % Strain Lagrange
+% limits=[-0.7,0.7];
+% suffix=[foldername,num2str(slice),'_Lneg'];
+% units = '$L_{\lambda_{1}} \quad  [\mathrm{mm/mm}]$';
+% d=squeeze(Data(series).strain.L_lambda(:,:,slice,:,1));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_Lsum'];
+% units = '$L_{\lambda_{2}} \quad  [\mathrm{mm/mm}]$';
+% d=squeeze(Data(series).strain.L_lambda(:,:,slice,:,2));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_Lpos'];
+% units = '$L_{\lambda_{3}} \quad  [\mathrm{mm/mm}]$';
+% d=squeeze(Data(series).strain.L_lambda(:,:,slice,:,3));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_Lshear'];
+% units = '$L_{max} \quad  [\mathrm{mm/mm}]$';
+% d=squeeze(Data(series).strain.ShearL_max(:,:,slice,:));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_Lvol'];
+% units = '$L_{vol}=\frac{\delta V}{V} \quad  [\mathrm{mm^3/mm^3}]$';
+% d=squeeze(Data(series).strain.L_Volumetric(:,:,slice,:));
+% colormap_strain(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% 
+% % Strain Rate
+% limits=[-1500,1500];
+% suffix=[foldername,num2str(slice),'_SRneg'];
+% units = '$SR_{\lambda_{1}} \quad  [\mathrm{s^{-1}}]$';
+% d=squeeze(Data(series).strain.SR_lambda(:,:,slice,:,1));
+% colormap_strain(m,d,suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_SRsum'];
+% units = '$SR_{\lambda_{2}} \quad  [\mathrm{s^{-1}}]$';
+% d=squeeze(Data(series).strain.SR_lambda(:,:,slice,:,2));
+% colormap_strain(m,d,suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_SRpos'];
+% units = '$SR_{\lambda_{3}} \quad  [\mathrm{s^{-1}}]$';
+% d=squeeze(Data(series).strain.SR_lambda(:,:,slice,:,3));
+% colormap_strain(m,d,suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% suffix=[foldername,num2str(slice),'_SRshear'];
+% units = '$SR_{max} \quad  [\mathrm{s^{-1}}]$';
+% d=squeeze(Data(series).strain.ShearSR_max(:,:,slice,:));
+% colormap_strain(m,d,suffix,limits,units);
+% vepcGIFcmaps(m,d.*squeeze(mask(:,:,slice,:)),suffix,limits,units);
+% 
+% % FA COLORMAPS 
+% limits = [0, 1]; % FA values range from 0 to 1
+% suffix = [foldername, num2str(slice), '_FAE']; % Name for FA_E
+% units = 'FAE'; % FA is unitless
+% d = squeeze(Data.strain.FAE(:,:,slice,:)); % Get FA_E data from the struct
+% colormap_strain(m, abs(d).*squeeze(mask(:,:,slice,:)), suffix, limits, units); % Display FA_E
+% vepcGIFcmaps(m, abs(d).*squeeze(mask(:,:,slice,:)), suffix, limits, units); % Create GIF for FA_E
+% 
+% limits = [0, 1]; % FA values range from 0 to 1
+% suffix = [foldername, num2str(slice), '_FAL']; % Name for FA_L
+% units = 'FAL'; % FA is unitless
+% d = squeeze(Data.strain.FAL(:,:,slice,:)); % Get FA_L data from the struct
+% colormap_strain(m, abs(d).*squeeze(mask(:,:,slice,:)), suffix, limits, units); % Display FA_l
+% vepcGIFcmaps(m, abs(d).*squeeze(mask(:,:,slice,:)), suffix, limits, units); % Create GIF for FA_l
+% 
+% limits = [0, 1]; % FA values range from 0 to 1
+% suffix = [foldername, num2str(slice), '_FASR']; % Name for FA_SR
+% units = 'FASR'; % FA is unitless
+% d = squeeze(Data.strain.FASR(:,:,slice,:)); % Get FA_SR data from the struct
+% colormap_strain(m, abs(d).*squeeze(mask(:,:,slice,:)), suffix, limits, units); % Display FA_SR
+% vepcGIFcmaps(m, abs(d).*squeeze(mask(:,:,slice,:)), suffix, limits, units); % Create GIF for FA_SR
+% 
+% end
+% cd ..
+% 
+
+% strain_mvc_plots_v2Siemens(Data.strain_GM,'GM',trigger);
+% strain_mvc_plots_v2Siemens(Data.strain_SOL,'SOL',trigger);
+
+
+save('siemens_final.mat','-v7.3')
+
+% %% By Saskya, This is in case you have mats created
+% 
+% % 1. Load Image Volume and Strain Data
+% % try
+% %     load('siemensProcessed.mat', 'Mg');  % Load anatomical image volume
+% %     fprintf('MG Image loaded successfully.\n');
+% % catch
+% %     error('siemensProcessed.mat not found. Please provide the correct file.');
+% % end
+% % 
+% % try
+% %     load('siemens_final.mat', 'Data');  % Load strain data
+% %     fprintf('Strain data loaded successfully.\n');
+% % catch
+% %     error('siemens_final.mat not found. Please provide the correct file.');
+% % end
+% % 
+% % series = 1;  % Set to the correct series if multiple series exist
+
+% %% 2. Load the Muscle Segmentation (NRRD File) Without Overwriting Data
+% [filename, pathname] = uigetfile('*.nrrd', 'Select the Muscle Segmentation NRRD File');
+% if isequal(filename, 0)
+%     error('No segmentation file selected. Please select a valid segmentation file.');
+% end
+% segFile = fullfile(pathname, filename);
+% seg = nrrdread(segFile);
+% 
+% % Ensure segmentation is extracted correctly
+% if isstruct(seg) && isfield(seg, 'pixelData')
+%     seg = seg.pixelData;
+% end
+% 
+% % Extract segmentation name for unique variable naming
+% [~, segmentation_name, ~] = fileparts(filename);
+% parts = split(segmentation_name, '_');
+% if length(parts) >= 2
+%     segmentation_label = strjoin(parts(1:2), '_');  % Use "XX_XXX"
+% else
+%     segmentation_label = segmentation_name;  % Fallback if name format is unexpected
+% end
+% 
+% fprintf('Loaded segmentation: %s\n', segmentation_label);
+% 
+% % Process segmentation and store it in a struct to avoid overwriting
+% if ~exist('Segmentations', 'var')
+%     Segmentations = struct();
+% end
+% Segmentations.(segmentation_label) = seg;
+% 
+% % Correct orientation and slices
+% seg_corrected = permute(seg, [2, 1, 3]);                  % Rotate
+% seg_corrected = flip(seg_corrected, 2);                   % Flip horizontal
+% seg_corrected = flip(seg_corrected, 2);                   % Flip vertical
+% seg_corrected = seg_corrected(:, :, end:-1:1);            % Reverse slice order
+% seg_corrected = seg_corrected(:, :, 2:end-1);             % Drop first and last slices
+% 
+% % Save corrected version with a unique name
+% Segmentations.([segmentation_label '_corrected']) = seg_corrected;
+% 
+% fprintf('Stored corrected segmentation as Segmentations.%s_corrected\n', segmentation_label);
+% 
+% 
+% 
+% % Reassign for compatibility with rest of the code
+% seg_corrected = Segmentations.([segmentation_label '_corrected']);
+% 
+% %% 4. Verification of Corrected Alignment (for Mid Slice)
+% sliceIdx = round(size(Mg, 3) / 2);
+% 
+% % Adjust figure size for medium thumbnail
+% figure('Units', 'pixels', 'Position', [100, 100, 800, 800]); % Larger canvas
+% 
+% % Display the image with improved magnification
+% imshow(mat2gray(Mg(:, :, sliceIdx, 1)), 'InitialMagnification', 400);
+% 
+% % Maximize axis size to utilize full canvas
+% set(gca, 'Position', [0 0 1 1]); 
+% 
+% % Overlay segmentation contour
+% hold on;
+% contour(seg_corrected(:, :, sliceIdx), [0.5 0.5], 'r', 'LineWidth', 2);
+% 
+% % Title for clarity
+% title('Corrected Segmentation Overlay on Image Volume');
+% 
+% % Save the image with higher resolution
+% print(gcf, 'FinalCorrectedSegmentationOverlay.png', '-dpng', '-r300');
+% 
+% fprintf('Verification image saved as FinalCorrectedSegmentationOverlay.png\n');
+% 
+% 
+% %% 5. Slice-by-Slice Verification of Segmentation Alignment
+% 
+% % Number of slices in segmentation volume
+% minSlices = size(seg_corrected, 3);
+% 
+% % Determine grid layout (adjust rows/cols if needed)
+% numRows = ceil(sqrt(minSlices));  % Define number of rows
+% numCols = ceil(minSlices / numRows);  % Define number of columns
+% 
+% % Create figure with multiple subplots
+% figure('Units', 'normalized', 'Position', [0.1, 0.1, 0.8, 0.8]); % Adjusted for better visualization
+% 
+% for sliceIdx = 1:minSlices  % Iterate through slices
+%     subplot(numRows, numCols, sliceIdx);  % Arrange in grid
+% 
+%     imshow(mat2gray(Mg(:, :, sliceIdx, 1)), 'InitialMagnification', 'fit');
+%     hold on;
+%     contour(seg_corrected(:, :, sliceIdx), [0.5 0.5], 'r', 'LineWidth', 1);
+%     title(['Slice ', num2str(sliceIdx)]);
+% 
+%     % Remove axis ticks for a cleaner view
+%     axis off;
+% end
+% 
+% sgtitle('Segmentation Overlay Across Slices');  % Super title for the whole figure
+% 
+% % Save the image in high resolution
+% print(gcf, 'Segmentation_Overlay_Grid.png', '-dpng', '-r300');
+% fprintf('Thumbnail image saved as Segmentation_Overlay_Grid.png\n');
+% 
+% %% 6. Compute the Volumetric Strain Mask for the Entire Volume
+% L_vol_4DFlow = abs(Data(series).strain.L_Volumetric);
+% 
+% % 🔄 Reverse strainMask slice order to match flipped segmentation
+% strainMask = flip(any(L_vol_4DFlow, 4), 3);  
+% 
+% if ~isequal(size(seg_corrected), size(strainMask))
+%     error('Mismatch in dimensions between segmentation and strain mask.');
+% end
+% 
+% segmentationStrainMask = double(seg_corrected) .* double(strainMask);
+% sliceIdx = round(size(Mg, 3) / 2);
+% 
+% % Create a larger figure window
+% figure('Units', 'pixels', 'Position', [100, 100, 800, 800]); 
+% 
+% % Display the image with improved magnification
+% imshow(mat2gray(Mg(:, :, sliceIdx, 1)), 'InitialMagnification', 400);
+% 
+% % Maximize axis size to utilize full canvas
+% set(gca, 'Position', [0 0 1 1]);
+% 
+% % Overlay the segmentation and strain mask
+% hold on;
+% contour(segmentationStrainMask(:, :, sliceIdx), [0.5 0.5], 'r', 'LineWidth', 2);
+% 
+% % Add a clear title
+% title('Segmentation and Strain Overlay');
+% 
+% % Save the improved figure
+% print(gcf, 'SegmentationAndStrainOverlay.png', '-dpng', '-r300');
+% fprintf('Verification image saved as SegmentationAndStrainOverlay.png\n');
+% 
+% 
+% %% 7. Compute the Bounding Box Using Pure Voxel-Based Limits
+% % Identify rows, columns, and slices containing non-zero segmentation data
+% segProjection = squeeze(max(segmentationStrainMask, [], 3));  % Max projection across slices
+% rowSum = sum(segProjection, 2);  % Sum across columns
+% colSum = sum(segProjection, 1);  % Sum across rows
+% 
+% % Identify the first and last rows with meaningful data
+% minRow = find(rowSum > 0, 1, 'first');
+% maxRow = find(rowSum > 0, 1, 'last');
+% 
+% % Identify the first and last columns with meaningful data
+% minCol = find(colSum > 0, 1, 'first');
+% maxCol = find(colSum > 0, 1, 'last');
+% 
+% % Slice limits — Adjust to account for flipped slice order
+% [segRows, segCols, segSlices] = ind2sub(size(segmentationStrainMask), find(segmentationStrainMask > 0));
+% 
+% % Ensure minSlice is the smallest and maxSlice is the largest
+% minSlice = min(segSlices);
+% maxSlice = max(segSlices);
+% 
+% % Print new bounding box to verify fix
+% fprintf('Fixed Bounding Box:\nRows: [%d - %d], Columns: [%d - %d], Slices: [%d - %d]\n', ...
+%     minRow, maxRow, minCol, maxCol, minSlice, maxSlice);
+% 
+% 
+% %% 
+% % 7.1 Bounding Box Visualization REVISAR EL TAMANO DE LA CAJA
+% % Create a larger figure window for medium-sized thumbnail
+% figure('Units', 'pixels', 'Position', [100, 100, 800, 800]); 
+% 
+% % Mid-slice for visualization (accounting for flipped slices)
+% sliceIdx = size(Mg, 3) - round(size(Mg, 3) / 2) + 1;
+% 
+% % Display the image with improved magnification
+% imshow(mat2gray(Mg(:, :, sliceIdx, 1)), 'InitialMagnification', 400);
+% 
+% % Maximize axis usage
+% set(gca, 'Position', [0 0 1 1]);
+% 
+% % Overlay Segmentation Mask
+% hold on;
+% contour(seg_corrected(:, :, sliceIdx), [0.5 0.5], 'r', 'LineWidth', 2);
+% 
+% % Overlay Final Bounding Box
+% rectangle('Position', [minCol, minRow, maxCol - minCol, maxRow - minRow], ...
+%     'EdgeColor', 'g', 'LineWidth', 2);
+% 
+% % Improve Title and Legend Visibility
+% title('Pure Voxel-Based Bounding Box Overlay');
+% legend('Segmentation Mask', 'Pure Voxel-Based Bounding Box', 'Location', 'southoutside');
+% 
+% % Save the improved figure
+% print(gcf, 'PureVoxelBasedBoundingBoxOverlay.png', '-dpng', '-r300');
+% 
+% fprintf('Pure voxel-based bounding box overlay image saved as PureVoxelBasedBoundingBoxOverlay.png\n');
+% 
+% 
+% figure;
+% imshow(max(seg_corrected, [], 3), []);
+% hold on;
+% rectangle('Position', [minCol, minRow, maxCol - minCol, maxRow - minRow], 'EdgeColor', 'r', 'LineWidth', 2);
+% title('Bounding Box Over Segmentation');
+% 
+% %% 8. Partition the Volume for Sub-volume Analysis (Sub-project 2)
+% % Define Sub-volume Boundaries Based on Bounding Box
+% rowEdges = round(linspace(minRow, maxRow + 1, 4));   % SI segments (Anterior-Posterior)
+% colEdges = round(linspace(minCol, maxCol + 1, 3));   % AP segments (Medial-Lateral)
+% 
+% % Reverse the slice edges to account for flipped segmentation
+% sliceEdges = round(linspace(minSlice, maxSlice, 3));  % Ensure slice order matches segmentation
+% fprintf('Updated sliceEdges: %s\n', mat2str(sliceEdges));
+% 
+% %% 8.1 Subvolumes Mask
+% 
+% % Compute the total number of subvolumes
+% numSubVolumes = (length(rowEdges) - 1) * (length(colEdges) - 1) * (length(sliceEdges) - 1);
+% fprintf('Total number of subvolumes: %d\n', numSubVolumes);
+% 
+% ap_labels = ["AP1", "AP2"];
+% ml_labels = ["ML1", "ML2"];
+% si_labels = ["SI1", "SI2", "SI3"];
+% 
+% % Init storage for this segmentation
+% if ~exist('SubvolumeMasks', 'var')
+%     SubvolumeMasks = struct();
+% end
+% SubvolumeMasks.(segmentation_label) = cell(1, numSubVolumes);
+% 
+% figure;
+% for subIndex = 1:numSubVolumes
+%     subplot(3, 4, subIndex);
+% 
+%     % Initialize subvolume mask
+%     subvolume_mask = zeros(size(seg_corrected));
+% 
+%     % Define indices
+%     rowIdx = rowEdges(floor((subIndex - 1) / 4) + 1):(rowEdges(floor((subIndex - 1) / 4) + 2) - 1);
+%     colIdx = colEdges(mod(floor((subIndex - 1) / 2), 2) + 1):(colEdges(mod(floor((subIndex - 1) / 2), 2) + 2) - 1);
+%     sliceIdx = sliceEdges(mod(subIndex - 1, 2) + 1):(sliceEdges(mod(subIndex - 1, 2) + 2));
+% 
+%     % Extract mask
+%     subvolume_mask(rowIdx, colIdx, sliceIdx) = seg_corrected(rowIdx, colIdx, sliceIdx);
+%     SubvolumeMasks.(segmentation_label){subIndex} = subvolume_mask;
+% 
+%     % Visualization (unchanged)
+%     seg_crop_resized = imresize3(seg_corrected(rowIdx, colIdx, sliceIdx), size(subvolume_mask), 'nearest');
+%     imshow(im2double(max(subvolume_mask, [], 3)) + ...
+%            im2double(max(seg_crop_resized, [], 3)), []);
+% 
+%     % Label
+%     si_index = floor((subIndex - 1) / 4) + 1;
+%     ap_index = mod(floor((subIndex - 1) / 2), 2) + 1;
+%     ml_index = mod(subIndex - 1, 2) + 1;
+%     fprintf('Subvolume %d: Slices [%d - %d]\n', subIndex, sliceIdx(1), sliceIdx(end));
+%     title(sprintf('%s-%s-%s', si_labels(si_index), ap_labels(ap_index), ml_labels(ml_index)));
+% end
+% 
+% fprintf('Total number of subvolumes: %d (Expected: 12)\n', numSubVolumes);
+% fprintf('SI segments: %d, AP segments: %d, ML segments: %d\n', ...
+%         length(rowEdges) - 1, length(colEdges) - 1, length(sliceEdges) - 1);
+% 
+% % Reassign current subvolume masks for strain calculation
+% subvolume_masks = SubvolumeMasks.(segmentation_label);
+% 
+% 
+% %% **8.2 Generate Subvolume Masks Visualization Based on Segmentation**
+% 
+% % Restore the current segmentation’s data
+% subvolume_masks = SubvolumeMasks.(segmentation_label);
+% seg_corrected = Segmentations.([segmentation_label '_corrected']);
+% 
+% % Define correct labeling order
+% si_labels = ["SI1", "SI2", "SI3"];  % Superior-Inferior: 3 segments
+% ap_labels = ["AP1", "AP2"];         % Anterior-Posterior: 2 segments
+% ml_labels = ["ML1", "ML2"];         % Medial-Lateral: 2 segments
+% 
+% figure;
+% for subIndex = 1:numSubVolumes
+%     subplot(3, 4, subIndex);
+% 
+%     % Overlay segmentation on each subvolume
+%     imshow(max(subvolume_masks{subIndex}, [], 3), []);
+%     hold on;
+%     contour(max(seg_corrected, [], 3), [0.5 0.5], 'r', 'LineWidth', 1);
+% 
+%     % Compute anatomical region label
+%     si_index = floor((subIndex - 1) / 4) + 1;
+%     ap_index = mod(floor((subIndex - 1) / 2), 2) + 1;
+%     ml_index = mod(subIndex - 1, 2) + 1;
+% 
+%     % Assign the correct label
+%     title(sprintf('%s-%s-%s', si_labels(si_index), ap_labels(ap_index), ml_labels(ml_index)));
+% end
+% 
+% % Save subvolume masks figure
+% outputFolder = fullfile('Segmentations', segmentation_label);
+% if ~exist(outputFolder, 'dir')
+%     mkdir(outputFolder);
+% end
+% saveas(gcf, fullfile(outputFolder, [segmentation_label '_SubvolumeMasks.png']));
+% fprintf('Subvolume mask visualization saved to: %s_SubvolumeMasks.png\n', segmentation_label);
+% 
+% 
+% %%
+% % % Check segmentation in each subvolume
+% % for subIndex = 1:numSubVolumes
+% %     fprintf('Checking Subvolume %d...\n', subIndex);
+% %     fprintf('Size: %s | Nonzero Pixels: %d\n', mat2str(size(subvolume_masks{subIndex})), nnz(subvolume_masks{subIndex}));
+% % end
+% % 
+% %
+% 
+% %% Step 9: Strain for Subvolumes with Anatomical Labels
+% 
+% frames = size(XS, 4);  % Number of 4D frames
+% 
+% % Ensure Data.(segmentation_label) exists before assigning fields
+% if ~isfield(Data, segmentation_label)
+%     Data.(segmentation_label) = struct();
+% end
+% 
+% Data.(segmentation_label).strain_subvolume = cell(1, numSubVolumes);
+% Data.(segmentation_label).strain_subvolume_peak = cell(1, numSubVolumes);
+% 
+% % Define anatomical labels
+% si_labels = ["SI1", "SI2", "SI3"];  % Superior-Inferior
+% ap_labels = ["AP1", "AP2"];         % Anterior-Posterior
+% ml_labels = ["ML1", "ML2"];         % Medial-Lateral
+% 
+% for subIndex = 1:numSubVolumes
+%     this_mask = subvolume_masks{subIndex};
+% 
+%     % Compute anatomical label
+%     si_index = floor((subIndex - 1) / 4) + 1;
+%     ap_index = mod(floor((subIndex - 1) / 2), 2) + 1;
+%     ml_index = mod(subIndex - 1, 2) + 1;
+%     region_label = sprintf('%s-%s-%s', ...
+%         si_labels(si_index), ap_labels(ap_index), ml_labels(ml_index));
+% 
+%     if nnz(this_mask) == 0
+%         fprintf('Skipping %s (No segmentation data)\n', region_label);
+%         Data.(segmentation_label).strain_subvolume{subIndex} = [];
+%         Data.(segmentation_label).strain_subvolume_peak{subIndex} = [];
+%         continue;
+%     end
+% 
+%     % Get actual nonzero slices
+%     slice_range = find(squeeze(any(any(this_mask, 1), 2)));  % Slices with segmentation
+%     if isempty(slice_range)
+%         fprintf('%s: No slices with segmentation.\n', region_label);
+%         continue;
+%     end
+%     startSlice = min(slice_range);
+%     endSlice   = max(slice_range);
+%     num_slices = endSlice - startSlice + 1;
+% 
+%     % Initialize dynamic mask and assign mask within correct slice range
+%     dynamic_mask = zeros(size(XS));
+%     dynamic_mask(:, :, startSlice:endSlice, :) = ...
+%         repmat(this_mask(:, :, startSlice:endSlice), [1, 1, 1, frames]);
+% 
+%     fprintf('%s: Slices [%d - %d] | Nonzero voxels in dynamic_mask: %d\n', ...
+%         region_label, startSlice, endSlice, nnz(dynamic_mask));
+% 
+%     if nnz(dynamic_mask) == 0
+%         warning('%s: Dynamic mask is empty. Skipping.', region_label);
+%         continue;
+%     end
+% 
+%     % Apply strain computation
+%     Data.(segmentation_label).strain_subvolume{subIndex} = ...
+%         strain_ROI_v3Siemens(Data(series).strain, double(dynamic_mask));
+% 
+%     Data.(segmentation_label).strain_subvolume_peak{subIndex} = ...
+%         peak_ROI_SiemensV2(Data.(segmentation_label).strain_subvolume{subIndex});
+% end
+% 
+% %% Step 10: Strain for Whole Muscle
+% fprintf('Processing Whole Volume Dynamic Strain...\n');
+% 
+% [~, ~, seg_slices] = ind2sub(size(seg_corrected), find(seg_corrected > 0));
+% whole_start = min(seg_slices);
+% whole_end   = max(seg_slices);
+% 
+% whole_volume_dynamic_mask = zeros(size(XS));
+% whole_volume_dynamic_mask(:,:,whole_start:whole_end,:) = ...
+%     repmat(seg_corrected(:,:,whole_start:whole_end), [1, 1, 1, frames]);
+% 
+% % Optional: assign general strain field into the current segmentation label
+% Data.(segmentation_label).strain = Data(series).strain;
+% 
+% 
+% Data.(segmentation_label).strain_whole = ...
+%     strain_ROI_v3Siemens(Data.(segmentation_label).strain, double(whole_volume_dynamic_mask));
+% 
+% Data.(segmentation_label).strain_whole_peak = ...
+%     peak_ROI_SiemensV2(Data.(segmentation_label).strain_whole);
+% 
+% %% Step 11: Save Results
+% 
+% % Create output folder if it doesn't exist
+% if ~exist('Segmentations', 'dir')
+%     mkdir('Segmentations');
+% end
+% 
+% 
+% save(['Segmentations/' segmentation_label '_strain_data.mat'], 'Data', '-v7.3');
+% fprintf('Strain data saved to: Segmentations/%s_strain_data.mat\n', segmentation_label);
+% 
+% % Define anatomical labels
+% si_labels = ["SI1", "SI2", "SI3"];
+% ap_labels = ["AP1", "AP2"];
+% ml_labels = ["ML1", "ML2"];
+% 
+% % Loop through each subvolume and display its corresponding label
+% for subIndex = 1:numSubVolumes
+%     % Compute anatomical label
+%     si_index = floor((subIndex - 1) / 4) + 1;
+%     ap_index = mod(floor((subIndex - 1) / 2), 2) + 1;
+%     ml_index = mod(subIndex - 1, 2) + 1;
+% 
+%     region_label = sprintf('%s-%s-%s', ...
+%         si_labels(si_index), ap_labels(ap_index), ml_labels(ml_index));
+% 
+%     % Print subvolume info
+%     fprintf('Subvolume %2d → %s | Data Type: %s\n', ...
+%         subIndex, region_label, class(Data.(segmentation_label).strain_subvolume_peak{subIndex}));
+% end
+% 
+% 
+% %% Step 13: Generate Strain Plots with Anatomical Labels
+% 
+% % Label definitions
+% si_labels = ["SI1", "SI2", "SI3"];
+% ap_labels = ["AP1", "AP2"];
+% ml_labels = ["ML1", "ML2"];
+% 
+% % Whole segmentation plot
+% outputFolder = fullfile('Segmentations', segmentation_label, 'StrainPlots', 'WholeMuscle');
+% 
+% if ~exist(outputFolder, 'dir')
+%     mkdir(outputFolder);
+% end
+% cd(outputFolder);
+% strain_mvc_plots_v2Siemens(Data.(segmentation_label).strain_whole, 'WholeMuscle', trigger);
+% 
+% cd('..');
+% 
+% % Subvolumes
+% for subIndex = 1:numSubVolumes
+% strain_data = Data.(segmentation_label).strain_subvolume{subIndex};
+% 
+%     if ~isempty(strain_data)
+%         % Determine anatomical region label
+%         si_index = floor((subIndex - 1) / 4) + 1;
+%         ap_index = mod(floor((subIndex - 1) / 2), 2) + 1;
+%         ml_index = mod(subIndex - 1, 2) + 1;
+% 
+%         region_label = sprintf('%s-%s-%s', ...
+%             si_labels(si_index), ap_labels(ap_index), ml_labels(ml_index));
+% 
+%         % Create folder
+%      outputFolder = fullfile('Segmentations', segmentation_label, 'StrainPlots', region_label);
+% 
+%         if ~exist(outputFolder, 'dir')
+%             mkdir(outputFolder);
+%         end
+% 
+%         % Change to that folder and generate plots
+%         prevDir = pwd;
+%         cd(outputFolder);
+% 
+%         fprintf('Plotting %s...\n', region_label);
+%         strain_mvc_plots_v2Siemens(strain_data, region_label, trigger);
+% 
+%         cd(prevDir);
+%     else
+%         fprintf('Skipping Subvolume %02d: No strain data available.\n', subIndex);
+%     end
+% end
