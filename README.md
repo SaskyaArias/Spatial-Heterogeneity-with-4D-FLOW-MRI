@@ -24,6 +24,8 @@ Image Processing Toolbox
 Custom or existing NRRD file reader (e.g., nrrdread.m)
 4D Flow MRI-derived displacement and segmentation data
 
+Download all .m files and create a folder with this routines. 
+
 # 1. 4D Flow MRI Preprocessing
 
 Make sure the Siemens 4D Flow DICOM folders are in your working directory. These should include the magnitude image and the three velocity components. The code expects them to be processed in the following order:
