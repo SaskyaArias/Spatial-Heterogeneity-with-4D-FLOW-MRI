@@ -9,7 +9,7 @@ Fractional anisotropy (FA_E, FA_L, FA_SR)
 Subvolume-based strain heterogeneity using PCA-aligned segmentation
 The goal is to better understand localized mechanical behavior in healthy muscle tissue.
 
-📂 Code Features
+ Code Features
 
 Preprocessing pipeline for 4D Flow MRI segmentation masks
 PCA-based subvolume generation (3×2×2 partitioning)
@@ -17,7 +17,7 @@ Voxelwise eigenvalue decomposition to compute strain and FA metrics
 Regional analysis and comparison between subvolumes and whole muscle
 Automated plotting and data export to .mat and .xlsx
 
-🛠 Requirements
+ Requirements
 
 MATLAB R2024b
 Image Processing Toolbox
