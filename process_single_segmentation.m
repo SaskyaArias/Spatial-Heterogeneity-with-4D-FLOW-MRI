@@ -92,31 +92,51 @@ coords = [x, y, z];
 pca_coords = coords * coeff;
 
 if contains(lower(segmentation_label), 'ta') || contains(lower(segmentation_label), 'tib')
-    % TA-specific: Global k-means across entire cross-section
     fprintf('🔍 Using PCA-aligned + global k-means strategy (optimized for TA)\n');
 
     % Step 1: SI slicing (PC1)
     si_edges = linspace(min(pca_coords(:,1)), max(pca_coords(:,1)), 4);
     si_bin = discretize(pca_coords(:,1), si_edges);  % 1–3
 
-    % Step 2: K-means across the full cross-section (PC2/PC3)
-    cross_section = pca_coords(:, 2:3);  % PC2-PC3
-    num_clusters = 4;                    % 2 AP × 2 ML
-    rng(1);                              % For reproducibility
+    % Step 2: Determine ML/AP axis assignments using dot products
+    ml_dir = [1, 0, 0];  % X
+    ap_dir = [0, 1, 0];  % Y
+
+    alignment_pc2_ml = abs(dot(coeff(:,2), ml_dir));
+    alignment_pc2_ap = abs(dot(coeff(:,2), ap_dir));
+    alignment_pc3_ml = abs(dot(coeff(:,3), ml_dir));
+    alignment_pc3_ap = abs(dot(coeff(:,3), ap_dir));
+
+    if alignment_pc2_ml > alignment_pc2_ap
+        ml_axis = 2; ap_axis = 3;
+        fprintf('💡 TA: PC2 aligned with ML (%.3f), PC3 aligned with AP (%.3f)\n', alignment_pc2_ml, alignment_pc3_ap);
+    else
+        ml_axis = 3; ap_axis = 2;
+        fprintf('💡 TA: PC2 aligned with AP (%.3f), PC3 aligned with ML (%.3f)\n', alignment_pc2_ap, alignment_pc3_ml);
+    end
+
+    x_extent = range(coords(:,1));  % ML
+    y_extent = range(coords(:,2));  % AP
+    fprintf('📏 TA anatomical extent — ML: %d, AP: %d (voxels)\n', x_extent, y_extent);
+
+    % Step 3: Global k-means clustering on corrected ML/AP plane
+    cross_section = [pca_coords(:, ap_axis), pca_coords(:, ml_axis)];  % AP vs ML
+    num_clusters = 4;
+    rng(1);
     [cluster_idx, cluster_centers] = kmeans(cross_section, num_clusters, 'Replicates', 5);
 
-    % Step 3: Convert k-means clusters to AP/ML structure
-    [~, ml_order] = sort(cluster_centers(:,1));  % PC2 ~ ML
-    [~, ap_order] = sort(cluster_centers(:,2));  % PC3 ~ AP
+    % Step 4: Convert clusters into AP/ML labels using cluster center sorting
+    [~, ml_order] = sort(cluster_centers(:,2));  % ML is now 2nd col
+    [~, ap_order] = sort(cluster_centers(:,1));  % AP is now 1st col
 
-    apml_map = zeros(num_clusters, 2);  % cluster → [AP, ML]
+    apml_map = zeros(num_clusters, 2);
     for c = 1:num_clusters
         ap_idx = find(ap_order == c);
         ml_idx = find(ml_order == c);
         apml_map(c, :) = [ap_idx > 2, ml_idx > 2] + 1;
     end
 
-    % Step 4: Assign region index using SI bin + AP/ML cluster
+    % Step 5: Assign full 3D region index
     region_idx = zeros(length(coords), 1);
     valid = ~isnan(si_bin);
     for i = find(valid)'
@@ -128,25 +148,60 @@ if contains(lower(segmentation_label), 'ta') || contains(lower(segmentation_labe
         region_idx(i) = region;
     end
 
+
 else
-    % ✅ Default: PCA-aligned 3×2×2 uniform binning for all other muscles
+    % Default: PCA-aligned 3×2×2 uniform binning for all other muscles
     fprintf(' Using PCA-aligned 3×2×2 uniform binning strategy\n');
 
-    si_edges = linspace(min(pca_coords(:,1)), max(pca_coords(:,1)), 4);
-    ml_edges = linspace(min(pca_coords(:,2)), max(pca_coords(:,2)), 3);
-    ap_edges = linspace(min(pca_coords(:,3)), max(pca_coords(:,3)), 3);
+   % Define anatomical reference directions in image space
+ml_dir = [1, 0, 0];  % Mediolateral = X-axis
+ap_dir = [0, 1, 0];  % Anteroposterior = Y-axis
 
-    si_bin = discretize(pca_coords(:,1), si_edges);
-    ml_bin = discretize(pca_coords(:,2), ml_edges);
-    ap_bin = discretize(pca_coords(:,3), ap_edges);
+% Check alignment of PC2 and PC3 with anatomical axes
+alignment_pc2_ml = abs(dot(coeff(:,2), ml_dir));
+alignment_pc2_ap = abs(dot(coeff(:,2), ap_dir));
+alignment_pc3_ml = abs(dot(coeff(:,3), ml_dir));
+alignment_pc3_ap = abs(dot(coeff(:,3), ap_dir));
 
-    region_idx = zeros(length(coords), 1);
-    valid = ~(isnan(si_bin) | isnan(ap_bin) | isnan(ml_bin));
-    for i = find(valid)'
-        si = si_bin(i); ap = ap_bin(i); ml = ml_bin(i);
-        region = (si - 1) * 4 + (ap - 1) * 2 + ml;
-        region_idx(i) = region;
-    end
+% Decide which PCA axis is ML and which is AP
+if alignment_pc2_ml > alignment_pc2_ap
+    ml_axis = 2;
+    ap_axis = 3;
+    fprintf('💡 PC2 aligned with ML (%.3f), PC3 aligned with AP (%.3f)\n', ...
+        alignment_pc2_ml, alignment_pc3_ap);
+else
+    ml_axis = 3;
+    ap_axis = 2;
+    fprintf('💡 PC2 aligned with AP (%.3f), PC3 aligned with ML (%.3f)\n', ...
+        alignment_pc2_ap, alignment_pc3_ml);
+end
+
+% Also print anatomical extents from raw segmentation
+x_extent = range(coords(:,1));  % ML
+y_extent = range(coords(:,2));  % AP
+fprintf('📏 Anatomical extent — ML: %d, AP: %d (voxels)\n', x_extent, y_extent);
+
+% Now define the bin edges dynamically
+si_edges = linspace(min(pca_coords(:,1)), max(pca_coords(:,1)), 4);  % PC1 = SI
+ml_edges = linspace(min(pca_coords(:,ml_axis)), max(pca_coords(:,ml_axis)), 3);
+ap_edges = linspace(min(pca_coords(:,ap_axis)), max(pca_coords(:,ap_axis)), 3);
+
+% Bin each voxel into a region (3x2x2)
+si_bin = discretize(pca_coords(:,1), si_edges);
+ml_bin = discretize(pca_coords(:,ml_axis), ml_edges);
+ap_bin = discretize(pca_coords(:,ap_axis), ap_edges);
+
+% Initialize and assign region index
+region_idx = zeros(length(coords), 1);
+valid = ~(isnan(si_bin) | isnan(ap_bin) | isnan(ml_bin));
+for i = find(valid)'
+    si = si_bin(i);
+    ap = ap_bin(i);
+    ml = ml_bin(i);
+    region = (si - 1) * 4 + (ap - 1) * 2 + ml;
+    region_idx(i) = region;
+end
+
 end
 
 % Build label volume
@@ -365,6 +420,7 @@ Data.(segmentation_label).voxel_count_whole = nnz(whole_volume_dynamic_mask);
 Data.(segmentation_label).strain_whole_peak = ...
     peak_ROI_SiemensV2(Data.(segmentation_label).strain_whole);
 
+
 %%
 % Step 11: Save Results
 
@@ -372,7 +428,7 @@ Data.(segmentation_label).strain_whole_peak = ...
 if ~exist('Segmentations', 'dir')
     mkdir('Segmentations');
 end
-              
+
 
 %save(['Segmentations/' segmentation_label '_strain_data.mat'], 'Data', '-v7.3');
 fprintf('Strain data saved to: Segmentations/%s_strain_data.mat\n', segmentation_label);
