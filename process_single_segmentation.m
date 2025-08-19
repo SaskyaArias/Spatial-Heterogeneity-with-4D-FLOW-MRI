@@ -45,6 +45,7 @@ title('Corrected Segmentation Overlay on Image Volume');
 print(gcf, 'FinalCorrectedSegmentationOverlay.png', '-dpng', '-r300');
 fprintf('Verification image saved as FinalCorrectedSegmentationOverlay.png\n');
 
+
 % 5. Slice-by-Slice Verification of Segmentation Alignment
 minSlices = size(seg_corrected, 3);
 numRows = ceil(sqrt(minSlices));
@@ -62,6 +63,8 @@ sgtitle('Segmentation Overlay Across Slices');
 print(gcf, 'Segmentation_Overlay_Grid.png', '-dpng', '-r300');
 fprintf('Thumbnail image saved as Segmentation_Overlay_Grid.png\n');
 
+
+
 % 6. Compute the Volumetric Strain Mask for the Entire Volume
 L_vol_4DFlow = abs(Data(series).strain.L_Volumetric);
 strainMask = flip(any(L_vol_4DFlow, 4), 3);  
@@ -74,7 +77,7 @@ figure('Units', 'pixels', 'Position', [100, 100, 800, 800]);
 imshow(mat2gray(Mg(:, :, sliceIdx, 1)), 'InitialMagnification', 400);
 set(gca, 'Position', [0 0 1 1]);
 hold on;
-contour(segmentationStrainMask(:, :, sliceIdx), [0.5 0.5], 'r', 'LineWidth', 2);
+contour(segmentationStrainMask(:, :, sliceIdx), [0.5 0.5], 'r', 'LineWidth', 5);
 title('Segmentation and Strain Overlay');
 print(gcf, 'SegmentationAndStrainOverlay.png', '-dpng', '-r300');
 fprintf('Verification image saved as SegmentationAndStrainOverlay.png\n');
@@ -233,47 +236,42 @@ subvolume_masks = SubvolumeMasks.(segmentation_label);
 fprintf(' Subvolume partitioning complete: 12 regions created for %s\n', segmentation_label);
 
 %%
-% 8.1 Updated Visualization: Subvolume Masks with Anatomical Labels
+% 8.1 Updated Visualization: Subvolume Masks with Anatomical Labels (fixed padding, no shrink)
 si_labels = ["SI1", "SI2", "SI3"];
 ap_labels = ["AP1", "AP2"];
 ml_labels = ["ML1", "ML2"];
 
-figure;
+pad = 20;  % adjust margin size as needed
+
+figure('Color','w');
 for r = 1:12
     subplot(3, 4, r);
-    mask = SubvolumeMasks.(segmentation_label){r};
-    imshow(max(mask, [], 3), []);
-    hold on;
-    contour(max(seg_corrected, [], 3), [0.5 0.5], 'r');
 
+    % 2D projections
+    mask2d = max(SubvolumeMasks.(segmentation_label){r}, [], 3);
+    seg2d  = max(seg_corrected, [], 3);
+
+    % pad both mask and seg with black (zeros) — same scale preserved
+    mask2d_show = padarray(mask2d, [pad pad], 0, 'both');
+    seg2d_show  = padarray(seg2d,  [pad pad], 0, 'both');
+
+    % show padded mask
+    imshow(mask2d_show, 'InitialMagnification','fit'); hold on
+
+    % overlay contour thicker
+    contour(seg2d_show, [0.5 0.5], 'r', 'LineWidth', 2, 'Clipping','off');
+    axis image off
+
+    % title
     si_idx = floor((r - 1) / 4) + 1;
     ap_idx = mod(floor((r - 1) / 2), 2) + 1;
     ml_idx = mod((r - 1), 2) + 1;
-
     title(sprintf('%s-%s-%s', si_labels(si_idx), ap_labels(ap_idx), ml_labels(ml_idx)));
 end
 
-saveas(gcf, fullfile(outputFolder, [segmentation_label '_PCAAligned_SubvolumeMasks.png']));
-fprintf('Saved PCA-aligned subvolume mask visualization.\n');
-% Subvolume data match to original verification
-total_voxels_in_seg = nnz(seg_corrected);
-total_voxels_in_subvolumes = 0;
+exportgraphics(gcf, fullfile(outputFolder, [segmentation_label '_PCAAligned_SubvolumeMasks.png']), 'Resolution', 300);
+fprintf('Saved PCA-aligned subvolume mask visualization with padding + thick contour.\n');
 
-for r = 1:12
-    total_voxels_in_subvolumes = total_voxels_in_subvolumes + nnz(SubvolumeMasks.(segmentation_label){r});
-end
-
-fprintf('Original segmentation voxels: %d\\n', total_voxels_in_seg);
-fprintf('Sum of all subvolume voxels: %d\\n', total_voxels_in_subvolumes);
-
-
-label_volume_3D = zeros(size(seg_corrected));
-for r = 1:12
-    label_volume_3D(SubvolumeMasks.(segmentation_label){r}) = r;
-end
-% Save label volume for later use
-save(fullfile(outputFolder, [segmentation_label '_LabelVolume3D.mat']), 'label_volume_3D');
-fprintf('3D label volume saved to %s\n', outputFolder);
 % 8.3 Labeled 3D Rendering with Distinct Colors (Centroid Labels Only)
 
 figure('Color', 'w', 'Position', [100, 100, 1400, 1600]);
@@ -321,9 +319,9 @@ text(centroid(2), centroid(1), centroid(3), num2str(r), ...
 
 end
 
-% ✅ Export figure after the loop
+%  Export figure after the loop
 exportgraphics(gcf, fullfile(outputFolder, [segmentation_label '_LabeledSubvolume3D_Centroid.png']), 'Resolution', 300);
-fprintf('✅ Saved labeled subvolume figure with centroid-based labels.\n');
+fprintf(' Saved labeled subvolume figure with centroid-based labels.\n');
 
 %%
 
