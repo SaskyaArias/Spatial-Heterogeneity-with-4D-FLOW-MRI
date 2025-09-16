@@ -1,0 +1,377 @@
+
+function struct = strain_tensor_calcs_v2(vx, VX, vy, VY, vz, VZ, XS, YS, ZS, pixelspacing, triggerX)
+
+clc
+%% displacement calculations Euler way
+
+pixel_spacing = pixel_spacing / 10; 
+
+dx = zeros(size(subVol_vx));
+dy = zeros(size(subVol_vy));
+dz = zeros(size(subVol_vz));
+
+for t = 1:length(triggerX)
+    for x = 1:size(subVol_vx, 2)
+        for y = 1:size(subVol_vx, 1)
+            for z = 1:size(subVol_vx, 3)
+                dx(y, x, z, t + 1) = dx(y, x, z, t) + subVol_vx(y, x, z, t) * triggerX(t);
+                dy(y, x, z, t + 1) = dy(y, x, z, t) + (-1) * subVol_vy(y, x, z, t) * triggerX(t);
+                dz(y, x, z, t + 1) = dz(y, x, z, t) + subVol_vz(y, x, z, t) * triggerX(t);
+            end
+        end
+    end
+end
+
+%% displacement calculations Lagrange way
+% Correct Initialization for Sub-volume Analysis
+dxL = zeros(size(subVol_vx));
+dyL = zeros(size(subVol_vy));
+dzL = zeros(size(subVol_vz));
+
+for t = 1:length(triggerX)
+    for x = 1:size(subVol_vx, 2)
+        for y = 1:size(subVol_vx, 1)
+            for z = 1:size(subVol_vx, 3)
+                
+                % Round coordinates for mapping
+                X = round(subVol_xs(y, x, z, t));
+                Y = round(subVol_ys(y, x, z, t));
+                Z = round(subVol_zs(y, x, z, t));
+
+                % Boundary Condition Checks
+                X = max(min(X, size(subVol_vx, 2)), 1);
+                Y = max(min(Y, size(subVol_vy, 1)), 1);
+                Z = max(min(Z, size(subVol_vz, 3)), 1);
+
+                % Lagrangian Displacement Calculation
+                dxL(y, x, z, t + 1) = dxL(y, x, z, t) + subVol_vx(Y, X, Z, t) * triggerX(t);
+                dyL(y, x, z, t + 1) = dyL(y, x, z, t) + (-1) * subVol_vy(Y, X, Z, t) * triggerX(t);
+                dzL(y, x, z, t + 1) = dzL(y, x, z, t) + subVol_vz(Y, X, Z, t) * triggerX(t);
+
+                % 🔹 Debug Display to Inspect Displacement Values
+                disp('Sample dxL values for frame 1:');
+                disp(squeeze(dxL(:,:,1,1)));
+
+
+
+            end
+        end
+    end
+end
+
+
+% Allocate for tensors using sub-volume size
+E = zeros([size(subVol_vx), 3, 3]);  % Euler Strain Tensor
+L = E;                               % Lagrangian Strain Tensor
+SR = E;                              % Strain Rate Tensor
+SR_L = E;                            % Alternative Strain Rate Tensor (if required)
+
+
+%% strain Tensor euler way
+% Multiplication coefficient to keep same convention as previous papers
+k = 10;
+
+disp("Strain tensor calculations Euler way")
+disp("=======================================")
+tic
+
+% Check displacement ranges before calculation
+fprintf('Max dxL: %.4f | Max dyL: %.4f | Max dzL: %.4f\n', ...
+    max(dxL(:)), max(dyL(:)), max(dzL(:)));
+fprintf('Size of E before calculation: %s\n', mat2str(size(E)));
+
+
+pixel_spacing = pixel_spacing / 10;  % Scale down temporarily for testing
+
+
+
+for i = 1:size(triggerX, 2) + 1
+    % Calculate Euler strain for each frame
+    tempStrain = tensor_calcs(...
+        squeeze(dx(:,:,:,i)),...
+        squeeze(dy(:,:,:,i)),...
+        squeeze(dz(:,:,:,i)),...
+        pixelspacing);
+
+    % Assign the calculated strain tensor to 'E'
+    E(:,:,:,i,:,:) = k * tempStrain;
+
+    % Display min/max values for each frame
+    fprintf('Frame %d | tempStrain Min: %.4f | tempStrain Max: %.4f\n', ...
+        i, min(tempStrain(:)), max(tempStrain(:)));
+
+    % Check displacement min/max for each frame
+    fprintf('dxL Min/Max for Frame %d: [%.4f, %.4f]\n', ...
+        i, min(dxL(:,:,:,i)), max(dxL(:,:,:,i)));
+    fprintf('dyL Min/Max for Frame %d: [%.4f, %.4f]\n', ...
+        i, min(dyL(:,:,:,i)), max(dyL(:,:,:,i)));
+    fprintf('dzL Min/Max for Frame %d: [%.4f, %.4f]\n', ...
+        i, min(dzL(:,:,:,i)), max(dzL(:,:,:,i)));
+end
+
+% Display final strain tensor range
+fprintf('Final E - Min E: %.4f | Max E: %.4f\n', min(E(:)), max(E(:)));
+
+% Edge trimming as per standard convention
+E(1,:,:,:,:,:) = [];
+E(end,:,:,:,:,:) = [];
+E(:,1,:,:,:,:) = [];
+E(:,end,:,:,:,:) = [];
+E(:,:,1,:,:,:) = [];
+E(:,:,end,:,:,:) = [];
+toc
+%% strain Tensor Lagrange way
+%multiplication coefficient to keep same convention as previous papers
+k = 10;
+
+disp("Strain tensor calculations Lagrange way")
+disp("=======================================")
+tic
+
+% Ensure 'L' is correctly initialized for sub-volumes
+L = zeros([size(dxL), 3, 3]);
+
+fprintf('Displacement Check: dxL Max = %.4f | dyL Max = %.4f | dzL Max = %.4f\n', ...
+    max(dxL(:)), max(dyL(:)), max(dzL(:)));
+fprintf('Size of L before calculation: %s\n', mat2str(size(L)));
+
+
+pixel_spacing = pixel_spacing / 10;  % Scale down temporarily for testing
+
+
+% Padding Displacement Fields for Lagrangian Calculation
+dxL_padded = padarray(dxL, [1 1 1], 'replicate', 'both');
+dyL_padded = padarray(dyL, [1 1 1], 'replicate', 'both');
+dzL_padded = padarray(dzL, [1 1 1], 'replicate', 'both');
+
+% Now pass the padded fields to tensor_calcs
+for i = 1:length(triggerX) + 1
+    L(:,:,:,i,:,:)= k * tensor_calcs(...
+        squeeze(dxL_padded(:,:,:,i)),...
+        squeeze(dyL_padded(:,:,:,i)),...
+        squeeze(dzL_padded(:,:,:,i)),...
+        pixel_spacing);
+end
+
+    % Display calculated strain values for each frame
+    fprintf('Frame %d | tempStrain Min: %.4f | tempStrain Max: %.4f\n', ...
+        i, min(tempStrain(:)), max(tempStrain(:)));
+
+    % Assign strain tensor to 'L'
+    L(:,:,:,i,:,:) = k * tempStrain;
+
+    % Displacement min/max checks for this frame
+    fprintf('dxL Min/Max for Frame %d: [%.4f, %.4f]\n', ...
+        i, min(dxL(:,:,:,i)), max(dxL(:,:,:,i)));
+    fprintf('dyL Min/Max for Frame %d: [%.4f, %.4f]\n', ...
+        i, min(dyL(:,:,:,i)), max(dyL(:,:,:,i)));
+    fprintf('dzL Min/Max for Frame %d: [%.4f, %.4f]\n', ...
+        i, min(dzL(:,:,:,i)), max(dzL(:,:,:,i)));
+end
+
+% Final Strain Values
+fprintf('Lagrangian Strain - Min L: %.4f | Max L: %.4f\n', min(L(:)), max(L(:)));
+
+% Pixel Spacing Information
+fprintf('Pixel Spacing Used: [%.3f, %.3f, %.3f]\n', ...
+    pixelspacing(1), pixelspacing(2), pixelspacing(3));
+
+% Boundary Removal to Avoid Edge Artifacts
+L(1,:,:,:,:,:) = [];
+L(end,:,:,:,:,:) = [];
+L(:,1,:,:,:,:) = [];
+L(:,end,:,:,:,:) = [];
+L(:,:,1,:,:,:) = [];
+L(:,:,end,:,:,:) = [];
+toc
+
+
+%% strain rate Tensor
+k=10000;
+
+disp("Strain rate tensor calculations")
+disp("=======================================")
+tic
+for i=1:size(triggerX,2)+1
+    SR(:,:,:,i,:,:)=k*tensor_calcs(squeeze(VX(:,:,:,i)),...
+                                    squeeze(VY(:,:,:,i)),...
+                                            squeeze(VZ(:,:,:,i)),...
+                                                 pixelspacing);
+end
+
+SR(1,:,:,:,:,:)=[];
+SR(end,:,:,:,:,:)=[];
+SR(:,1,:,:,:,:)=[];
+SR(:,end,:,:,:,:)=[];
+SR(:,:,1,:,:,:)=[];
+SR(:,:,end,:,:,:)=[];
+
+toc
+
+%% eigenvalue decomposition for 
+disp("Strain rate and Strain ev decomposition")
+disp("=======================================")
+tic
+
+
+sizeE=size(E);
+VE=zeros(sizeE);
+VL=zeros(sizeE);
+VSR=zeros(sizeE);
+LE=zeros(sizeE(1:end-1));
+LL=zeros(sizeE(1:end-1));
+LSR=zeros(sizeE(1:end-1));
+LE_temp=zeros(3);
+LL_temp=zeros(3);
+LSR_temp=zeros(3);
+
+for x=1:sizeE(1)
+    for y=1:sizeE(2)
+        for z=1:sizeE(3)
+            for frame=1:sizeE(4)
+                
+             [VE(x,y,z,frame,:,:),LE_temp]=eig(squeeze(E(x,y,z,frame,:,:)));
+             LE(x,y,z,frame,:)=[LE_temp(1,1),LE_temp(2,2),LE_temp(3,3)];
+             
+             [VL(x,y,z,frame,:,:),LL_temp]=eig(squeeze(L(x,y,z,frame,:,:)));
+             LL(x,y,z,frame,:)=[LL_temp(1,1),LL_temp(2,2),LL_temp(3,3)];
+             
+             [VSR(x,y,z,frame,:,:),LSR_temp]=eig(squeeze(SR(x,y,z,frame,:,:)));
+             LSR(x,y,z,frame,:)=[LSR_temp(1,1),LSR_temp(2,2),LSR_temp(3,3)];
+                
+            end
+        end
+    end
+end
+toc
+%%
+% FA Calculation after eigenvalue decomposition - Matrix-based approach
+
+epsilon = 1e-6;  % Regularization term
+abs_LE = abs(LE); % Take the absolute value of eigenvalues for all tensors
+lambda_mean_E = mean(abs_LE, 5);  % Mean across eigenvalues for Euler Strain Tensor
+denom_E = sqrt(sum(abs_LE.^2, 5)) + epsilon;  % Sum of squares across the 5th dimension
+valid_denom_E = denom_E > 0.03;
+FA_E = zeros(size(lambda_mean_E));  % Initialize FA array
+numerator = sqrt(3/2) * sqrt(sum((abs_LE - lambda_mean_E).^2, 5));
+FA_E(valid_denom_E) = numerator(valid_denom_E) ./ denom_E(valid_denom_E);
+FA_E = max(0, min(FA_E, 1));
+
+%FA_L$
+
+epsilon = 1e-6;  % Regularization term
+abs_LL = abs(LL); % Take the absolute value of eigenvalues for all tensors
+lambda_mean_L = mean(abs_LL, 5);  % Mean across eigenvalues for Euler Strain Tensor
+denom_L = sqrt(sum(abs_LL.^2, 5)) + epsilon;  % Sum of squares across the 5th dimension
+valid_denom_L = denom_L > 0.03;
+FA_L = zeros(size(lambda_mean_L));  % Initialize FA array
+numerator = sqrt(3/2) * sqrt(sum((abs_LL - lambda_mean_L).^2, 5));
+FA_L(valid_denom_L) = numerator(valid_denom_L) ./ denom_L(valid_denom_L);
+FA_L = max(0, min(FA_L, 1));
+
+%FA_SR
+
+epsilon = 1e-6;  % Regularization term
+abs_LSR = abs(LSR); % Take the absolute value of eigenvalues for all tensors
+lambda_mean_SR = mean(abs_LSR, 5);  % Mean across eigenvalues for Euler Strain Tensor
+denom_SR = sqrt(sum(abs_LSR.^2, 5)) + epsilon;  % Sum of squares across the 5th dimension
+valid_denom_SR = denom_SR > 0.03; %Change sensitivity
+FA_SR = zeros(size(lambda_mean_SR));  % Initialize FA array
+numerator = sqrt(3/2) * sqrt(sum((abs_LSR - lambda_mean_SR).^2, 5));
+FA_SR(valid_denom_SR) = numerator(valid_denom_SR) ./ denom_SR(valid_denom_SR);
+FA_SR = max(0, min(FA_SR, 1));
+ 
+struct.FAE = padarray(FA_E, [1 1], 0, 'both');   % Store FA_E in struct
+struct.FAL = padarray(FA_L, [1 1], 0, 'both');   % Store FA_L in struct
+struct.FASR = padarray(FA_SR, [1 1], 0, 'both'); % Store FA_SR in struct
+
+
+
+%% max shear calaculations (i.e. octahedral shear strain) Euler Way
+disp("Shear Strain and Strain rate")
+disp("=======================================")
+tic
+
+maxShearE=zeros(sizeE(1:4));
+maxShearL=zeros(sizeE(1:4));
+maxShearSR=zeros(sizeE(1:4));
+
+maxShearE(:,:,:,:)=2/3*sqrt((E(:,:,:,:,1,1)-E(:,:,:,:,2,2)).^2+...
+                            +(E(:,:,:,:,1,1)-E(:,:,:,:,3,3)).^2+...
+                            +(E(:,:,:,:,2,2)-E(:,:,:,:,3,3)).^2+...
+            +6*(E(:,:,:,:,1,2).^2+E(:,:,:,:,1,3).^2+E(:,:,:,:,2,3).^2));
+        
+        
+maxShearL(:,:,:,:)=2/3*sqrt((L(:,:,:,:,1,1)-L(:,:,:,:,2,2)).^2+...
+                            +(L(:,:,:,:,1,1)-L(:,:,:,:,3,3)).^2+...
+                            +(L(:,:,:,:,2,2)-L(:,:,:,:,3,3)).^2+...
+            +6*(L(:,:,:,:,1,2).^2+L(:,:,:,:,1,3).^2+L(:,:,:,:,2,3).^2));        
+        
+         
+maxShearSR(:,:,:,:)=2/3*sqrt((SR(:,:,:,:,1,1)-SR(:,:,:,:,2,2)).^2+...
+                            +(SR(:,:,:,:,1,1)-SR(:,:,:,:,3,3)).^2+...
+                            +(SR(:,:,:,:,2,2)-SR(:,:,:,:,3,3)).^2+...
+            +6*(SR(:,:,:,:,1,2).^2+SR(:,:,:,:,1,3).^2+SR(:,:,:,:,2,3).^2));
+toc
+
+%%
+
+%Strain tensor Euler way
+struct.E=padarray(E,[1 1],0,'both');
+
+%Strain tensor Lagrange way
+struct.L=padarray(L,[1 1],0,'both');
+
+%Strain rate tensor
+struct.SR=padarray(SR,[1 1],0,'both');
+
+% d* displacements
+struct.dx=dx;
+struct.dy=dy;
+struct.dz=dz;
+
+% *s tracked coordinates at each frame
+struct.xs=xs;
+struct.ys=ys;
+struct.zs=zs;
+
+% v* velocity along the * direction at each frame
+struct.vx=vx;
+struct.vy=vy;
+struct.vz=vz;
+
+% Strain eigenvalues
+struct.E_lambda=padarray(LE,[1 1],0,'both');
+% Strain eigen vectors (packed column by column as 3x3 matrix)
+struct.E_vector=padarray(VE,[1 1],0,'both');
+% max shear strain per voxel in roi
+struct.ShearE_max=padarray(maxShearE,[1 1],0,'both');
+%volumetric strain i.e. sum of diagonal components   
+struct.E_Volumetric=padarray(sum(LE,5),[1 1],0,'both');
+
+
+% Strain eigenvalues
+struct.L_lambda=padarray(LL,[1 1],0,'both');
+% Strain eigen vectors (packed column by column as 3x3 matrix)
+struct.L_vector=padarray(VL,[1 1],0,'both');
+% max shear strain per voxel in roi
+struct.ShearL_max=padarray(maxShearL,[1 1],0,'both');
+%volumetric strain i.e. sum of diagonal components   
+struct.L_Volumetric=padarray(sum(LL,5),[1 1],0,'both');
+
+    
+% Strain rate eigenvalues
+struct.SR_lambda=padarray(LSR,[1 1],0,'both');
+% Strain rate eigen vectors
+struct.SR_vector=padarray(VSR,[1 1],0,'both');
+% max shear strain rate per voxel in roi
+struct.ShearSR_max=padarray(maxShearSR,[1 1],0,'both');
+
+
+% Store FA results in struct
+struct.FAE = padarray(FA_E, [1 1], 0, 'both');
+struct.FAL = padarray(FA_L, [1 1], 0, 'both');
+struct.FASR = padarray(FA_SR, [1 1], 0, 'both');
+
+
+end
